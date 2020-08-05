@@ -1,0 +1,265 @@
+---
+title: "causality"
+author: "Arindam Basu"
+date: "05/08/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Causality
+
+## Purpose and overview
+The goal of this paper is to write about how to assess causal inference using directed acyclic graphs and counterfactual theories of causation. In epidemiology and health sciences, if X is a cause of Y, then:
+
+- We must first show that X is statistically significantly associated with Y and meets the criteria of internal validity
+- We must demonstrate that X and Y association is NOT one of chance alone
+- We must demonstrate that X and Y association cannot be explained by biases - selection bias, response bias, measurement bias
+- We must demonstrate that X and Y association cannot be explained by confounding variables
+
+After we have done these, we can assess the "weight" of evidence that X and Y are causally related by considering the nine criteria that Sir Austin Bradford Hill proposed (He called them "considerations" rather than criteria). The three main criteria are:
+
+- Strength of association
+- Temporality (cause must always precede effect)
+- Dose-response gradient (or biological gradient)
+
+## Causal inference based on DAGs
+- DAGs are directed acyclic graphs
+- Derives from path tracing rules of Sewall Wright
+- If X and Y are connected using a system of paths that traverse between the two, then:
+- We can start a path in any direction and move along that same direction traversing the network till we reach Y
+- The path can contain only ONE covariance path (double edged path)
+- The path can pass through one variable only once
+- If there are n valid paths connecting X and Y such that each path i has coefficient of p_i, then:
+- Covariance(X,Y) = p_1 * p_2 * .... * p_n or
+- Covariance(X, Y) = $\Pi$p_i
+
+## Where DAGs in a causal diagram differs from Sewall Wright's Path
+- There are no two way arrows 
+- Arrows flow only in one direction
+- The parent and child nodes are dependent otherwise the nodes are independent
+- All nodes must be present in the graph and paths specified
+
+## Three kinds of paths
+- All backdoor paths must remain closed
+- Backdoor paths are open if they have confounding variables in them (measured or unmeasured)
+- Backdoor paths are open if they have colliders in them that are conditioned on or controlled for
+- So, condition confounding variables in open backdoor paths, but do not condition on colliders in closed backdoor paths
+- Colliders are those where two arrows converge, e.g.,A -> B <- C
+- Typically, in epidemiology for instance, colliders are those where an exposure or an intervention and an outcome share the same variables
+
+## Mediators, Confounders, and colliders
+- A -> M -> Y (A is the exposure or the intervention, Y is the outcome)
+- M is  a mediator as it mediates the connection between A and Y
+- L -> A; L -> Y; A -> Y; here L is a confounder
+- A -> C <- Y ; here C is a collider
+- Judea Pearl has named "Chains", "Forks", and "colliders"
+
+
+## What happens?
+- Confounding variables must be controlled for
+- Controlling on colliders lead to selection bias
+
+## Counterfactual theory
+- A causes Y 
+- Imagine A is binary, and can take 2 values 1, and 0
+- Imagine Y is binary, takes 2 values 1, and 0
+
+## Counterfactuals
+- We will state any value "a" as a counterfactual to a value of A, if:
+- Say we OBSERVE Y = 1 when A = 1
+- What if A were to be 0, what would be the value of Y?
+- "What if A were to be 0 now that A = 1" is A's counterfactual "a"
+- Here, the corresponding value of Y under A's counterfactual is Y(a=0)
+
+## Definition of causality
+- P(Y = 1 | A = 1) is the likelihood of Y = 1 GIVEN A = 1
+- P(Y = 1 | A = 0) is the likelihood of Y = 1 GIVEN A = 0 or controlled condition or condition under comparison
+- Then Association Risk Ratio = P(Y = 1 | A = 1) / P(Y = 1 | A = 0)
+- The causal risk ratio = P(Y(a = 1) = 1 / P(Y(a = 0) = 1)
+- If the causal risk ratio == association risk ratio, then:
+- Association is Causation, not otherwise.
+
+## How do we find the counterfactuality?
+- We weight the individuals with contrasting conditions
+- We assess their associations
+- Three types of weights: 
+- Inverse probability weights
+- Standardised weights
+- Weights using instrumental variables
+
+## Codes are given below
+Use [NHEFS data](https://wwwn.cdc.gov/nchs/nhanes/nhefs/Default.aspx)
+
+
+```{r chunk1}
+library(tidyverse)
+library(geepack)
+library(lavaan)
+library(dagitty)
+library(Hmisc)
+library(boot)
+library(here)
+library(readxl)
+library(haven)
+```
+
+## Some analyses
+```{r analyses}
+# We will use the NHEFS data to study
+# whether smoking cessation leads to or causes weight gain
+
+nhefs <- read_excel(here("NHEFS.xls"))
+nhefs$cens <- ifelse(is.na(nhefs$wt82), 1, 0)
+
+# See the head of the file
+nhefs %>% head() # what the data looks like
+
+## remove missing values from NHEFS
+nhefs.nmv <-
+  nhefs[which(!is.na(nhefs$wt82)),] 
+
+# regress weight change on quitting smoking status, 
+lm(wt82_71 ~ qsmk, data = nhefs.nmv)
+
+# qsmk = quitters (0 = did not quit, 1 = quit)
+smokers <- nhefs.nmv %>%
+ group_by(qsmk) %>%
+ summarise(n = n(),
+          age_yrs = mean(age))
+gender <- nhefs %>%
+ count(sex)
+smokers
+gender$n / sum(gender$n)
+
+# fitting the ip weight
+# they fit a logistic regression on the exposure variable/intervention variable
+# with all potential confounders
+fit <- glm(
+  qsmk ~ sex + race + age + I(age ^ 2) +
+    as.factor(education) + smokeintensity +
+    I(smokeintensity ^ 2) + smokeyrs + I(smokeyrs ^ 2) +
+    as.factor(exercise) + as.factor(active) + wt71 + I(wt71 ^ 2),
+  family = binomial(),
+  data = nhefs.nmv
+)
+summary(fit)
+
+# We are creating the simple weights here
+# What is the probability of observation that other variables predict quitting
+p.qsmk.obs <-
+  ifelse(nhefs.nmv$qsmk == 0,
+         1 - predict(fit, type = "response"),
+         predict(fit, type = "response"))
+
+# we create a weight variable w by using inverse probability of the weights
+
+nhefs.nmv$w <- 1 / p.qsmk.obs
+summary(nhefs.nmv$w)
+
+# Now we regress using general estimating equation model
+# need "geepack" for this
+
+library("geepack")
+msm.w <- geeglm(
+  wt82_71 ~ qsmk,
+  data = nhefs.nmv,
+  weights = w,
+  id = seqn,
+  corstr = "independence"
+)
+summary(msm.w)
+
+## Instrumental variables
+# for simplicity, ignore subjects with missing outcome or missing instrument
+nhefs.iv <- nhefs[which(!is.na(nhefs$wt82) & !is.na(nhefs$price82)),]
+nhefs.iv$highprice <- ifelse(nhefs.iv$price82>=1.5, 1, 0)
+
+table(nhefs.iv$highprice, nhefs.iv$qsmk)
+
+## Let's do a t-test for the differences
+t.test(wt82_71 ~ highprice, data=nhefs.iv)
+
+## Use Lavaan's SEM function
+
+t2 <- '
+wt82_71 ~ qsmk
+qsmk ~ highprice
+wt82_71 ~~ highprice
+'
+
+res2 <- lavaan::sem(model = t2, data = nhefs.iv)
+summary(res2)
+
+## Another way
+
+t3 <- '
+wt82_71 ~ qsmk
+qsmk ~ highprice
+'
+
+res3 <- lavaan::sem(model = t3, data = nhefs.iv)
+summary(res3)
+
+
+```
+
+## Graphs using dagitty
+
+```{r chunk2}
+
+g <- dagitty('dag{
+  A [pos = "0,0"]
+  B [pos = "1, 0"]
+  C [pos = "2, 0"]
+  A -> B -> C
+  
+}')
+
+plot(g)
+
+
+```
+
+```{r confounding}
+
+confounding <- dagitty('dag{
+  A [pos = "1, 1"]
+  Y [pos = "2, 1"]
+  L [pos = "0, 2"]
+  A -> Y
+  L -> A
+  L -> Y
+  
+}')
+
+plot(confounding)
+
+```
+
+
+
+
+
+
+
+## Convert a lavaan object to graph using dagitty
+```{r chunk4}
+
+mdl <- lavaanify("
+X ~ C1 + C3
+M ~ X + C3
+Y ~ X + M + C3 + C5
+C1 ~ C2
+C3 ~ C2 + C4
+C5 ~ C4
+C1 ~~ C2 \n C1 ~~ C3 \n C1 ~~ C4 \n C1 ~~ C5
+C2 ~~ C3 \n C2 ~~ C4 \n C2 ~~ C5
+C3 ~~ C4 \n C3 ~~ C5",fixed.x=FALSE)
+plot( lavaanToGraph( mdl ) )
+
+
+```
+

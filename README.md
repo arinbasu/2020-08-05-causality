@@ -16,5 +16,8 @@ This repository contains the ipynb (jupyter notebook files) and data sets for le
 - Judea Pearl 
 - 
 
-## Workshop at CarpentryCon
+## Workshop at CarpentryCon 2020
 - Link: 
+
+## Public OSF.io project
+- Link: [Causality project publicly available at osf.io](https://osf.io/h45k3/)
